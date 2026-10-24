@@ -24,7 +24,11 @@
 **Device data:** r8q stock base DTB at `/Users/yuumee/ios-apollo/dtb/boot_unpacked/dtb` (ignored; source `/Users/yuumee/unixnu-r8q/dtb/r8q-stock/dtb`). The r8q touch is ST FTS5CU56A on QUPv3 SE5 I2C `0x49`, IRQ GPIO 15, power `tsp_ldo_en` GPIO 92; firmware `tsp_stm/fts5cu56a_r8.bin` is not yet obtained. Touch/keys are not implemented for r8q yet.
 
 **Next actions (in order):**
-1. Lowmem is a dead end on r8q. Next test: flash the highmem quiet image (same working 4 GiB base, no kprintf spam, `ufsrw=0`) and photograph the screen; look for `SWEET UFS:`, `DMA at`, `BSD root`, `host not ready`, `command timed out`, or the same `RTM` stop. If the UFS log still does not appear, add early prints in `bsd/dev/sweet_ufs.c` and optionally force the UFS DMA below 4 GiB (`ufsdmalow=1`); this needs the fork/CI kernel build.
+1. Lowmem is a dead end on r8q; keep the highmem kernel. The next UFS fix is prepared but not built/tested (needs the fork/CI kernel build):
+   - Add `dma-pa = 0xaf000000` to `/sweet-ufs` in `tools/mkadt.py` for `--r8q`. This is the old ABL ramdisk area; the shim has already copied the payload out of it before XNU starts, so the low buffer is free.
+   - Patch `sweet_ufs_init()` to read `dma-pa`; when present set `su.dma_pa = pa`, `su.dma = ml_io_map(pa, DMA_SIZE)`, and skip `kmem_alloc_contig()`. The shim's UFS probe uses low descriptors/data and passes; the kernel's high `kmem_alloc_contig` buffer is the main suspect (CAP.64AS alone does not prove the r8q SMMU/XPU path can DMA above 4 GiB).
+   - Verify the highmem ADT against the r8q live `/memory`: the current highmem ADT has `dram-base=0x100000000`, `dram-size=0xfff00000`, `/pram` at `0x1fff00000` (assumes a full 4 GiB high bank). If the r8q high bank is `0xfcc00000` like sweet, the top ~52 MiB is outside RAM; correct the size and put `/pram` inside.
+   - Test the highmem quiet image (or one rebuilt with the corrected ADT) read-only (`ufsrw=0 rootrw=0`); look for `DMA at 0xaf000000`, `SWEET UFS:`, `BSD root`, `host not ready`, `command timed out`, or the same `RTM` stop. If low DMA still hangs, check UFS `iommus`/SMMU and cache coherency next.
 2. Only after the UFS root device works: prepare the iPhone X 16.7.16 HFS+ root image and D22AP `/product` data. Flashing userdata is destructive to Android; requires explicit user confirmation at that time.
 3. Then r8q keys and the STM touch driver; obtain `fts5cu56a_r8.bin` from a vendor pull/firmware package.
 
