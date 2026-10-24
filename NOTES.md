@@ -1,5 +1,34 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## r8q (Samsung Galaxy S20 FE 5G, SM-G781B) - active port 2026-10-24
+
+**State:** the Apollo 0100 XNU kernel boots on r8q through the r8q shim/ADT and reaches early BSD. It then freezes at `RTM subsystem initialized` (last IOKit line `IOKit IOMD setownership ENABLED`). This is not a full iOS boot yet. The UFS hardware path itself is verified working from the shim.
+
+**Boot-only rule:** every test writes only `/dev/block/by-name/boot` (`/dev/block/sda23`, 64 MiB) in OrangeFox; every write is read back and SHA256-verified before reboot. Never flash `abl`/`xbl`/`xbl_config`. Stock boot is backed up and restorable:
+- Stock: `/Users/yuumee/unixnu-r8q/backups/r8q-20261020-073427/boot.img`, 67,108,864 bytes, SHA256 `6f262d5ce7479648e9692cd401a7938c249b68a312426124c8408c84c54beb3e`
+- Restore: `bash /Users/yuumee/unixnu-r8q/artifacts/UniXNU-r8q-verify-core-20261022/restore-stock-boot.sh`
+- adb/fastboot: `/Users/yuumee/unixnu-r8q/tools/platform-tools/{adb,fastboot}`
+
+**Images built and flashed (readback verified):**
+- Highmem XNU test: `/Users/yuumee/ios-apollo/shim/out/r8q/shim-boot-r8q.img`, 18,255,872 bytes, SHA256 `32c34dc4c4ad0ac1e348dbc50294c597eb6e2527a2e9b27d9af153240cca792a`. Cmdline includes `ufsrw=1 rootrw=1`, `rd=ufsroot0`, `cpus=1`, `sweetfb_noconsole=0`. Booted; froze at `RTM` as above. Photo `/Users/yuumee/unixnu-r8q/2026-10-24 16.45.55.jpg`.
+- UFS diagnostic (no XNU payload): `/Users/yuumee/ios-apollo/shim/out/r8q/shim-ufs-diag-r8q.img`, 1,609,728 bytes, SHA256 `d62f77c39ffe6e504434e8393e7c858499a56dbff7f9140e3910c6f2ff21f59d`. Booted; **UFS probe passes**: `hce=1 hcs=0x10F`; TUR/CAP/READ all `rc=0`; GPT read; `lastlba=01DC5BFF`; `boot` 64 MiB; `userdata` `MiB=0x1ACCE` (~107 GiB), `fs=other` (Android userdata, expected); read-only. Photo `/Users/yuumee/unixnu-r8q/2026-10-24 16.58.32.jpg`.
+- Lowmem read-only XNU test: `/Users/yuumee/ios-apollo/shim/out/r8q-lowmem/shim-boot-r8q.img`, 18,255,872 bytes, SHA256 `39d7815ca2c987cfd785ddc15084fda94f4042758b809cd962e52f94f39d4654`. ADT `/chosen dram-base=0xb0000000 dram-size=0x4cf00000` (kernel below 4 GiB); cmdline `debug=0xc serial=0 cpus=1 keepsyms=1 -noprogress rd=ufsroot0 ... ufsrw=0 rootrw=0 ...`; flashed/readback-verified, **boot result pending**.
+
+**Tools added for the port:**
+- `shim/build-r8q.sh`: one-command r8q ADT + payload + shim + boot image. `HIGHMEM=0` builds the lowmem ADT; `OUT=...` selects the output dir; `CMDLINE=...` overrides boot args. Verifies the stock template SHA256, the shim's no-ABS64 rule, and prints the image hash.
+- `tools/repack_bootv2.py`: repacks a boot image v2 using the stock r8q header (addresses `kernel 0x8000`, `ramdisk 0x2000000`, `tags 0x1e00000`, `dtb 0x1f00000`). Stock round-trip is byte-identical over the full 18,448,384-byte prefix; the v2 id is `SHA1(kernel||u32(len)||ramdisk||u32(len)||u32(0)||u32(0)||dtb||u32(len))`.
+- `tools/mkadt.py --r8q`: root compatible `D22AP`/`iPhone10,3`/`xiaomi,sweet`/`samsung,r8q`/`xiaomi,apollo`/`qcom,sm8250`/`AppleARM`, CPU `qcom,kryo585` and r8q clocks (1804/2419/2841 MHz).
+- Shim fixes: freestanding `streq` in `shim/ufs.c`; panic source table in `shim/shim.c` avoids an absolute pointer table (clang emitted ABS64 otherwise, which is fatal when the shim is loaded at 0x8000).
+
+**Device data:** r8q stock base DTB at `/Users/yuumee/ios-apollo/dtb/boot_unpacked/dtb` (ignored; source `/Users/yuumee/unixnu-r8q/dtb/r8q-stock/dtb`). The r8q touch is ST FTS5CU56A on QUPv3 SE5 I2C `0x49`, IRQ GPIO 15, power `tsp_ldo_en` GPIO 92; firmware `tsp_stm/fts5cu56a_r8.bin` is not yet obtained. Touch/keys are not implemented for r8q yet.
+
+**Next actions (in order):**
+1. Photograph the lowmem boot. If `SWEET UFS:`/`BSD root` appears, the highmem/4 GiB DMA path was the trigger; if it still freezes at `RTM`, the hang is in the kernel's UFS root init (ADT `/sweet-ufs` node vs r8q, `kmem_alloc_contig`, IOMD/SMMU). Next fallback: force `dram-size=0x80000000` (2 GiB, fully below 4 GiB) or add early UFS prints in `bsd/dev/sweet_ufs.c` (needs the fork/CI kernel build).
+2. Only after the UFS root device works: prepare the iPhone X 16.7.16 HFS+ root image and D22AP `/product` data. Flashing userdata is destructive to Android; requires explicit user confirmation at that time.
+3. Then r8q keys and the STM touch driver; obtain `fts5cu56a_r8.bin` from a vendor pull/firmware package.
+
+**Userdata status:** Android userdata is intact. The UFS probe and the lowmem image are read-only (`ufsrw=0`). The highmem test cmdline had `ufsrw=1 rootrw=1`, but the UFS driver never reached a write; no confirmed userdata modification. Do not write userdata until the user explicitly approves the destructive iOS-root step.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> APOLLO PORT, UPDATE 2026-10-23 (read first; sweet history follows) <<<
