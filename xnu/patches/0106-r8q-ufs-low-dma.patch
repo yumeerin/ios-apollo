@@ -1,0 +1,48 @@
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -610,16 +610,36 @@
+ 	su.wait = (wait == 1);
+ 
+ 	su.regs = ml_io_map(reg[0], reg[1]);
+-	if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+-	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+-		printf("SWEET UFS: no contiguous DMA memory\n");
+-		return ENOMEM;
+-	}
+-	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)su.dma);
+-	if (!pn) {
+-		return ENOMEM;
++
++	/*
++	 * r8q: the board's UFS DMA path is only known to work below 4 GiB. The
++	 * ADT can name a fixed low buffer (the old ABL ramdisk area); map it
++	 * uncached and skip the kernel high-memory allocation. The shim has
++	 * already copied the payload out of that area before XNU starts.
++	 */
++	uintptr_t const *dma_pa_prop = NULL;
++	unsigned int dma_pa_size = 0;
++	if (SecureDTGetProperty(node, "dma-pa", (void const **)&dma_pa_prop, &dma_pa_size) == kSuccess &&
++	    dma_pa_size >= sizeof(uintptr_t) && dma_pa_prop[0]) {
++		su.dma_pa = dma_pa_prop[0];
++		su.dma = ml_io_map(su.dma_pa, DMA_SIZE);
++		if (!su.dma) {
++			printf("SWEET UFS: cannot map low DMA at 0x%llx\n", su.dma_pa);
++			return ENOMEM;
++		}
++		printf("SWEET UFS: low DMA at 0x%llx\n", su.dma_pa);
++	} else {
++		if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
++		    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++			printf("SWEET UFS: no contiguous DMA memory\n");
++			return ENOMEM;
++		}
++		ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)su.dma);
++		if (!pn) {
++			return ENOMEM;
++		}
++		su.dma_pa = ptoa_64(pn);
+ 	}
+-	su.dma_pa = ptoa_64(pn);
+ 	su.lun = 0;
+ 	su.secsize = DEV_BSIZE;
+ 
