@@ -48,10 +48,11 @@ SWEET_ECID = 0x5357454554000001  # 'SWEET' + 1, synthetic
 FB_W, FB_H, FB_STRIDE = 1080, 2400, 1080 * 4
 # Internal UFS host (ufshc@1d84000 "ufs_mem"); QEMU virt has none
 UFS, UFS_SIZE = 0x01d84000, 0x3000
-# r8q: fixed low DMA buffer for the kernel UFS driver (the old ABL ramdisk
-# area, free after the shim copies the payload to highmem). The board's UFS
-# DMA path is only known to work below 4 GiB.
-R8Q_UFS_DMA_PA = 0xaf000000
+# r8q: fixed low DMA buffer for the kernel UFS driver. This is the ABL's
+# initrd area (linux,initrd-start = 0xaf01f000): the ABL itself loaded the
+# payload here through UFS, so low DMA to this region is known to work. The
+# shim copies the payload to highmem before XNU starts, freeing the area.
+R8Q_UFS_DMA_PA = 0xaf01f000
 TIMEBASE = 19200000
 VTIMER_INTID = 27
 # QEMU virt (-M virt,gic-version=3 -cpu cortex-a76): GICD/GICR and the generic timer's CNTFRQ

@@ -194,7 +194,7 @@ The driver lines start with `SWEET ...`, and crash reports start with `CRASH nam
 | Path | What |
 | --- | --- |
 | `shim/` | Bare-metal boot shim (C + asm) packed as an Android boot.img v2 |
-| `xnu/patches/` | The XNU patch series (0001–0104, applied in order by CI) plus staging scripts for libpthread, HFS and BearSSL |
+| `xnu/patches/` | The XNU patch series (0001–0106, applied in order by CI) plus staging scripts for libpthread, HFS and BearSSL |
 | `.github/workflows/xnu.yml` | `validate` (Ubuntu, seconds), then the kernel `build` (macOS) |
 | `tools/validate-repo.py` | Patch-series and script checks (numbering, hunk headers, replay of series-created files) |
 | `tools/mkadt.py` | Apple Device Tree from the board's MMIO layout and the iPhone X identity |
@@ -253,6 +253,8 @@ Not in git: partition backups, live device trees, recovery images, Apple firmwar
 | **0102** | **apollo:** GPU steps 18–19: core SMMU context (streams 0/1), `a650_sqe.fw` (`mkadt.py --sqe-fw`), Linux a650 register setup, command processor start, `CP_ME_INIT`; cmd-db bus addresses |
 | **0103** | **apollo:** accept apollo's `a650_sqe.fw` (version 0x093, below Linux's 0x095 minimum; the vendor kernel runs it) with a warning |
 | **0104** | **apollo:** the 3D core's SMMU stream entry written as the device tree declares it (stream 0, mask 0x401) |
+| **0105** | **apollo:** GPU step 20: TrustZone authenticates the signed zap shader and `CP_SET_SECURE_MODE 0` leaves secure mode |
+| **0106** | **r8q:** UFS low-DMA buffer named by `/sweet-ufs dma-pa`; skip the high `kmem_alloc_contig()` buffer |
 
 ## Key hardware facts
 
