@@ -1,0 +1,23 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -706,10 +706,17 @@
+ 	kprintf("SWEET BOOT: interrupts enabled\n");
+ 
+ 	/*
+-	 * This will start displaying progress to the user, start as early as possible
++	 * This will start displaying progress to the user, start as early as possible.
++	 * On r8q the video console's scroll geometry is wrong, so allow keeping the
++	 * early framebuffer console for diagnostics.
+ 	 */
+-	initialize_screen(NULL, kPEAcquireScreen);
+-	kprintf("SWEET BOOT: initialize_screen done\n");
++	int noscreen = 0;
++	if (PE_parse_boot_argn("sweetnoscreen", &noscreen, sizeof(noscreen)) && noscreen) {
++		kprintf("SWEET BOOT: initialize_screen skipped (sweetnoscreen=1)\n");
++	} else {
++		initialize_screen(NULL, kPEAcquireScreen);
++		kprintf("SWEET BOOT: initialize_screen done\n");
++	}
+ 
+ 	/*
+ 	 *	Initialize the shared region module.
