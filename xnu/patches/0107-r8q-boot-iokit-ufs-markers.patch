@@ -1,0 +1,105 @@
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -696,23 +696,27 @@
+ 	 * interrupts or preemption enabled may begin enforcement.
+ 	 */
+ 	kernel_startup_initialize_upto(STARTUP_SUB_EARLY_BOOT);
++	kprintf("SWEET BOOT: early boot phase done; enabling interrupts\n");
+ 
+ #if SCHED_HYGIENE_DEBUG
+ 	// Reset interrupts masked timeout before we enable interrupts
+ 	ml_spin_debug_clear_self();
+ #endif
+ 	(void) spllo();         /* Allow interruptions */
++	kprintf("SWEET BOOT: interrupts enabled\n");
+ 
+ 	/*
+ 	 * This will start displaying progress to the user, start as early as possible
+ 	 */
+ 	initialize_screen(NULL, kPEAcquireScreen);
++	kprintf("SWEET BOOT: initialize_screen done\n");
+ 
+ 	/*
+ 	 *	Initialize the shared region module.
+ 	 */
+ 	vm_commpage_init();
+ 	vm_commpage_text_init();
++	kprintf("SWEET BOOT: commpage initialized\n");
+ 
+ #if CONFIG_MACF
+ 	kernel_bootstrap_log("mac_policy_initmach");
+@@ -770,7 +774,9 @@
+ 
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_lockdown_iokit");
++	kprintf("SWEET BOOT: PE_lockdown_iokit enter\n");
+ 	PE_lockdown_iokit();
++	kprintf("SWEET BOOT: PE_lockdown_iokit exit\n");
+ #endif
+ 	/*
+ 	 * max_cpus must be nailed down by the time PE_lockdown_iokit() finishes,
+@@ -787,6 +793,7 @@
+ 	 *	Start the user bootstrap.
+ 	 */
+ #ifdef  MACH_BSD
++	kprintf("SWEET BOOT: bsd_init enter\n");
+ 	bsd_init();
+ #endif
+ 
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -378,8 +378,16 @@
+ 	 * against a kernel which has not yet enabled the full set of available
+ 	 * hardware protections.
+ 	 */
++	int iokit = 1;
++	(void)PE_parse_boot_argn("sweetiokit", &iokit, sizeof(iokit));
+ 	zalloc_iokit_lockdown();
++	if (!iokit) {
++		kprintf("SWEET BOOT: StartIOKitMatching skipped (sweetiokit=0)\n");
++		return;
++	}
++	kprintf("SWEET BOOT: StartIOKitMatching enter\n");
+ 	StartIOKitMatching();
++	kprintf("SWEET BOOT: StartIOKitMatching exit\n");
+ }
+ 
+ void
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -588,6 +588,7 @@
+ static int
+ sweet_ufs_init(void)
+ {
++	printf("SWEET UFS: init enter\n");
+ 	DTEntry node;
+ 	uintptr_t const *reg = NULL;
+ 	unsigned int size = 0;
+@@ -610,6 +611,7 @@
+ 	su.wait = (wait == 1);
+ 
+ 	su.regs = ml_io_map(reg[0], reg[1]);
++	printf("SWEET UFS: regs mapped\n");
+ 
+ 	/*
+ 	 * r8q: the board's UFS DMA path is only known to work below 4 GiB. The
+@@ -837,6 +839,7 @@
+ int
+ sweet_ufs_rootdev(dev_t *dev)
+ {
++	printf("SWEET UFS: rootdev enter\n");
+ 	if (!su.ready) {
+ 		int error = sweet_ufs_init();
+ 		if (error) {
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1131,7 +1131,9 @@
+ 	u_int32_t       flags;
+ 	kern_return_t   err;
+ 
++	printf("SWEET ROOT: calling IOFindBSDRoot\n");
+ 	err = IOFindBSDRoot(rootdevice, sizeof(rootdevice), &rootdev, &flags);
++	printf("SWEET ROOT: IOFindBSDRoot returned %d\n", err);
+ 	if (err) {
+ 		printf("setconf: IOFindBSDRoot returned an error (%d);"
+ 		    "setting rootdevice to 'sd0a'.\n", err);     /* XXX DEBUG TEMP */
