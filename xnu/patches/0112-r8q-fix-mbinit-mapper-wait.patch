@@ -1,0 +1,135 @@
+--- a/bsd/kern/uipc_mbuf.c
++++ b/bsd/kern/uipc_mbuf.c
+@@ -105,6 +105,8 @@
+ #include <machine/limits.h>
+ #include <machine/machine_routines.h>
+ 
++#include <arm64/sweet_early.h>
++
+ #include <sys/mcache.h>
+ #include <net/ntstat.h>
+ 
+@@ -1559,6 +1561,7 @@
+ 	unsigned int initmcl = 0;
+ 	thread_t thread = THREAD_NULL;
+ 
++	sweet_stage_mark(87, "mbinit enter");
+ 	microuptime(&mb_start);
+ 
+ 	/*
+@@ -1643,6 +1646,7 @@
+ 	read_random(&mb_obscure_extfree, sizeof(mb_obscure_extfree));
+ 	mb_obscure_extref |= 0x3;
+ 	mb_obscure_extfree |= 0x3;
++	sweet_stage_mark(88, "mbinit random done");
+ 
+ 	/* Make sure we don't save more than we should */
+ 	_CASSERT(MCA_SAVED_MBUF_SIZE <= sizeof(struct mbuf));
+@@ -1656,6 +1660,7 @@
+ 
+ 	/* Setup the mbuf table */
+ 	mbuf_table_init();
++	sweet_stage_mark(89, "mbinit mbuf table done");
+ 
+ 	/*
+ 	 * Allocate cluster slabs table:
+@@ -1710,6 +1715,7 @@
+ 	 * before alignment is not saved.
+ 	 */
+ 	ncpu = ml_wait_max_cpus();
++	sweet_stage_mark(93, "mbinit max cpus done");
+ 
+ 	/* Calculate the number of pages assigned to the cluster pool */
+ 	mcl_pages = (nmbclusters << MCLSHIFT) / PAGE_SIZE;
+@@ -1718,6 +1724,7 @@
+ 
+ 	/* Register with the I/O Bus mapper */
+ 	mcl_paddr_base = IOMapperIOVMAlloc(mcl_pages);
++	sweet_stage_mark(94, "mbinit mapper alloc done");
+ 
+ 	embutl = (mbutl + (nmbclusters * MCLBYTES));
+ 	VERIFY(((embutl - mbutl) % MBIGCLBYTES) == 0);
+@@ -1756,10 +1763,12 @@
+ 	mb_peak_newreport = FALSE;
+ 
+ 	lck_mtx_unlock(mbuf_mlock);
++	sweet_stage_mark(95, "mbinit freelist done");
+ 
+ 	(void) kernel_thread_start((thread_continue_t)mbuf_worker_thread_init,
+ 	    NULL, &thread);
+ 	thread_deallocate(thread);
++	sweet_stage_mark(96, "mbinit worker started");
+ 
+ 	ref_cache = mcache_create("mext_ref", sizeof(struct ext_ref),
+ 	    0, 0, MCR_SLEEP);
+@@ -1802,6 +1811,7 @@
+ 		    allocfunc, freefunc, auditfunc, logfunc, mbuf_slab_notify,
+ 		    (void *)(uintptr_t)m, flags, MCR_SLEEP);
+ 	}
++	sweet_stage_mark(97, "mbinit caches done");
+ 
+ 	/*
+ 	 * Set the max limit on sb_max to be 1/16 th of the size of
+--- a/iokit/IOKit/IOMapper.h
++++ b/iokit/IOKit/IOMapper.h
+@@ -39,6 +39,8 @@
+ ppnum_t IOMapperIOVMAlloc(unsigned pages);
+ void IOMapperIOVMFree(ppnum_t addr, unsigned pages);
+ ppnum_t IOMapperInsertPage(ppnum_t addr, unsigned offset, ppnum_t page);
++/* Release waiters when IOKit matching is skipped and there will be no mapper. */
++void IOMapperClearSystemMapper(void);
+ 
+ __END_DECLS
+ 
+--- a/iokit/Kernel/IOMapper.cpp
++++ b/iokit/Kernel/IOMapper.cpp
+@@ -150,6 +150,22 @@
+ 		sMapperLock.unlock();
+ 		sMapperLock.wakeup(&IOMapper::gSystem);
+ 	}
++}
++
++/*
++ * Called from the platform expert when IOKit matching is skipped. Without a
++ * running IOPlatformExpert the system mapper would stay kUnknown, and the
++ * first IOMapperIOVMAlloc() (mbinit) would sleep forever in
++ * waitForSystemMapper(). Publish "no mapper" so DMA clients fall back to
++ * identity mappings.
++ */
++void
++IOMapperClearSystemMapper(void)
++{
++	sMapperLock.lock();
++	IOMapper::gSystem = NULL;
++	sMapperLock.unlock();
++	sMapperLock.wakeup(&IOMapper::gSystem);
+ }
+ 
+ void
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -395,6 +395,14 @@
+ 		ml_set_max_cpus(max_cpus);
+ 		kprintf("SWEET BOOT: max cpus published without IOKit (%u)\n",
+ 		    max_cpus);
++		/*
++		 * IOPlatformExpert normally publishes the absence of a system
++		 * mapper during matching. Without that, mbinit()'s
++		 * IOMapperIOVMAlloc() sleeps in waitForSystemMapper() forever.
++		 */
++		extern void IOMapperClearSystemMapper(void);
++		IOMapperClearSystemMapper();
++		kprintf("SWEET BOOT: system mapper marked absent without IOKit\n");
+ 		sweet_stage_mark(28, "IOKit matching skipped");
+ 		return;
+ 	}
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -734,6 +734,7 @@
+ 	bsd_init_kprintf("calling mbinit\n");
+ 	mbinit();
+ 	restricted_in_port_init();
++	sweet_stage_mark(98, "restricted in port done");
+ 	sweet_stage_mark(74, "mbinit done");
+ #endif /* SOCKETS */
+ 
