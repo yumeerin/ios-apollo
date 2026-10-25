@@ -1,0 +1,20 @@
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -382,6 +382,17 @@
+ 	int iokit = 1;
+ 	(void)PE_parse_boot_argn("sweetiokit", &iokit, sizeof(iokit));
+ 	zalloc_iokit_lockdown();
++	/*
++	 * SWEET: CPU nubs are started asynchronously by IOKit matching, but
++	 * kperf_init_early() runs immediately after this function and sleeps in
++	 * ml_wait_max_cpus() until the nubs publish the count. On r8q matching
++	 * does not reach that point before kperf runs, so publish the topology
++	 * value here for both paths. ml_set_max_cpus() is idempotent and
++	 * SweetCPU later publishes the same value.
++	 */
++	ml_set_max_cpus(ml_get_topology_info()->max_cpu_id + 1);
++	kprintf("SWEET BOOT: max cpus published early (%u)\n",
++	    ml_get_topology_info()->max_cpu_id + 1);
+ 	if (!iokit) {
+ 		unsigned int max_cpus = ml_get_topology_info()->max_cpu_id + 1;
+ 
