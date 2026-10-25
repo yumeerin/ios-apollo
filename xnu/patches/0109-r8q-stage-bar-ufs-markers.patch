@@ -1,0 +1,541 @@
+--- a/osfmk/arm64/sweet_early.h
++++ b/osfmk/arm64/sweet_early.h
+@@ -8,6 +8,7 @@
+ 
+ #if defined(SWEET)
+ void sweet_early_mark(unsigned int stage, const char *label);
++void sweet_stage_mark(unsigned int stage, const char *label);
+ void sweet_early_putc(char c);
+ void sweet_early_panic(const char *fmt, va_list *args);
+ void sweet_early_relocate(uint64_t base);
+@@ -18,6 +19,11 @@
+ 	(void)stage;
+ 	(void)label;
+ }
++static inline void sweet_stage_mark(unsigned int stage, const char *label)
++{
++	(void)stage;
++	(void)label;
++}
+ static inline void sweet_early_disable(void) {}
+ #endif
+ 
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -716,22 +716,117 @@
+ #define FBCON_SCALE     2
+ #define FBCON_FG        0xffffffffu
+ #define FBCON_BG        0xff000000u
++#define FBCON_STATUS_H  (16 * FBCON_SCALE)
+ 
+ static volatile uint32_t *fbcon_base;
+ static uint32_t fbcon_width, fbcon_height, fbcon_stride;
+ static uint32_t fbcon_cols, fbcon_rows, fbcon_col, fbcon_row;
+ 
+ static void
+-fbcon_clear_row(uint32_t row)
++fbcon_fill(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t color)
+ {
+-	for (uint32_t y = row * 16 * FBCON_SCALE; y < (row + 1) * 16 * FBCON_SCALE; y++) {
++	for (uint32_t y = y0; y < y1; y++) {
+ 		volatile uint32_t *line = fbcon_base + y * (fbcon_stride / 4);
+-		for (uint32_t x = 0; x < fbcon_width; x++) {
+-			line[x] = FBCON_BG;
++		for (uint32_t x = x0; x < x1; x++) {
++			line[x] = color;
+ 		}
++	}
++}
++
++static void
++fbcon_clear_row(uint32_t row)
++{
++	fbcon_fill(0, row * 16 * FBCON_SCALE, fbcon_width,
++	    (row + 1) * 16 * FBCON_SCALE, FBCON_BG);
++}
++
++static void
++fbcon_glyph(uint32_t x0, uint32_t y0, unsigned char c, uint32_t fg, uint32_t bg)
++{
++	const unsigned char *glyph = iso_font + c * 16;
++
++	for (uint32_t gy = 0; gy < 16; gy++) {
++		for (uint32_t sy = 0; sy < FBCON_SCALE; sy++) {
++			volatile uint32_t *line = fbcon_base +
++			    (y0 + gy * FBCON_SCALE + sy) * (fbcon_stride / 4) + x0;
++			for (uint32_t gx = 0; gx < 8; gx++) {
++				uint32_t px = (glyph[gy] & (1u << gx)) ? fg : bg;
++				for (uint32_t sx = 0; sx < FBCON_SCALE; sx++) {
++					line[gx * FBCON_SCALE + sx] = px;
++				}
++			}
++		}
++	}
++}
++
++#if defined(SWEET)
++static void
++fbcon_append(char *buf, uint32_t *len, uint32_t cap, const char *text)
++{
++	while (*text && *len + 1 < cap) {
++		buf[(*len)++] = *text++;
++	}
++}
++
++/*
++ * Fixed status line at the very bottom of the panel. The scrolling text area
++ * stops FBCON_STATUS_H pixels above it, so this survives console wrapping.
++ */
++static void
++fbcon_status_draw(unsigned int stage, const char *label)
++{
++	char line[96];
++	uint32_t len = 0, value = stage, digits = 0, maxchars;
++	char num[4];
++	uint32_t y0, bg;
++
++	if (fbcon_base == NULL || fbcon_height < FBCON_STATUS_H * 3 ||
++	    fbcon_width < 8 * 8 * FBCON_SCALE) {
++		return;
++	}
++	y0 = fbcon_height - FBCON_STATUS_H;
++	if (stage >= 90) {
++		bg = 0xff401010u;
++	} else if (stage >= 50) {
++		bg = 0xff003838u;
++	} else if (stage >= 40) {
++		bg = 0xff003020u;
++	} else if (stage >= 30) {
++		bg = 0xff103010u;
++	} else {
++		bg = 0xff101830u;
++	}
++	fbcon_fill(0, y0, fbcon_width, fbcon_height, bg);
++
++	fbcon_append(line, &len, sizeof(line), "STAGE ");
++	do {
++		num[digits++] = (char)('0' + value % 10);
++		value /= 10;
++	} while (value && digits < sizeof(num));
++	while (digits) {
++		line[len++] = num[--digits];
++	}
++	fbcon_append(line, &len, sizeof(line), "  ");
++	fbcon_append(line, &len, sizeof(line), label);
++
++	maxchars = (fbcon_width - 8) / (8 * FBCON_SCALE);
++	if (len > maxchars) {
++		len = maxchars;
++	}
++	for (uint32_t i = 0; i < len; i++) {
++		fbcon_glyph(8 + i * 8 * FBCON_SCALE, y0, (unsigned char)line[i],
++		    0xffffffffu, bg);
+ 	}
++	__asm__ volatile("dsb sy" ::: "memory");
+ }
+ 
++void
++sweet_stage_mark(unsigned int stage, const char *label)
++{
++	fbcon_status_draw(stage, label);
++}
++#endif /* SWEET */
++
+ static void
+ fbcon_newline(void)
+ {
+@@ -744,12 +839,18 @@
+ static void
+ fbcon_init(void)
+ {
++	uint32_t text_height = fbcon_height;
++
++	if (text_height > FBCON_STATUS_H * 2) {
++		text_height -= FBCON_STATUS_H;
++	}
+ 	fbcon_cols = fbcon_width / (8 * FBCON_SCALE);
+-	fbcon_rows = fbcon_height / (16 * FBCON_SCALE);
++	fbcon_rows = text_height / (16 * FBCON_SCALE);
+ 	fbcon_col = fbcon_row = 0;
+ 	for (uint32_t r = 0; r < fbcon_rows; r++) {
+ 		fbcon_clear_row(r);
+ 	}
++	sweet_stage_mark(20, "framebuffer console ready");
+ }
+ 
+ static unsigned int
+@@ -772,19 +873,8 @@
+ 	if (fbcon_col >= fbcon_cols) {
+ 		fbcon_newline();
+ 	}
+-	const unsigned char *glyph = iso_font + c * 16;
+ 	uint32_t x0 = fbcon_col * 8 * FBCON_SCALE, y0 = fbcon_row * 16 * FBCON_SCALE;
+-	for (uint32_t gy = 0; gy < 16; gy++) {
+-		for (uint32_t sy = 0; sy < FBCON_SCALE; sy++) {
+-			volatile uint32_t *line = fbcon_base + (y0 + gy * FBCON_SCALE + sy) * (fbcon_stride / 4) + x0;
+-			for (uint32_t gx = 0; gx < 8; gx++) {
+-				uint32_t px = (glyph[gy] & (1u << gx)) ? FBCON_FG : FBCON_BG;
+-				for (uint32_t sx = 0; sx < FBCON_SCALE; sx++) {
+-					line[gx * FBCON_SCALE + sx] = px;
+-				}
+-			}
+-		}
+-	}
++	fbcon_glyph(x0, y0, c, FBCON_FG, FBCON_BG);
+ 	fbcon_col++;
+ }
+ 
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -118,6 +118,7 @@
+ #include <machine/machine_routines.h>
+ #include <libkern/version.h>
+ #include <pexpert/device_tree.h>
++#include <arm64/sweet_early.h>
+ #include <sys/codesign.h>
+ #include <sys/kdebug.h>
+ #include <sys/random.h>
+@@ -704,6 +705,7 @@
+ #endif
+ 	(void) spllo();         /* Allow interruptions */
+ 	kprintf("SWEET BOOT: interrupts enabled\n");
++	sweet_stage_mark(21, "interrupts enabled");
+ 
+ 	/*
+ 	 * This will start displaying progress to the user, start as early as possible.
+@@ -713,9 +715,11 @@
+ 	int noscreen = 0;
+ 	if (PE_parse_boot_argn("sweetnoscreen", &noscreen, sizeof(noscreen)) && noscreen) {
+ 		kprintf("SWEET BOOT: initialize_screen skipped (sweetnoscreen=1)\n");
++		sweet_stage_mark(22, "screen init skipped");
+ 	} else {
+ 		initialize_screen(NULL, kPEAcquireScreen);
+ 		kprintf("SWEET BOOT: initialize_screen done\n");
++		sweet_stage_mark(22, "screen init done");
+ 	}
+ 
+ 	/*
+@@ -724,6 +728,7 @@
+ 	vm_commpage_init();
+ 	vm_commpage_text_init();
+ 	kprintf("SWEET BOOT: commpage initialized\n");
++	sweet_stage_mark(23, "commpage initialized");
+ 
+ #if CONFIG_MACF
+ 	kernel_bootstrap_log("mac_policy_initmach");
+@@ -765,10 +770,12 @@
+ 	 */
+ 	kernel_bootstrap_log("OSKextRemoveKextBootstrap");
+ 	OSKextRemoveKextBootstrap();
++	sweet_stage_mark(24, "kext bootstrap removed");
+ 
+ 	/* No changes to kernel text and rodata beyond this point. */
+ 	kernel_bootstrap_log("machine_lockdown");
+ 	machine_lockdown();
++	sweet_stage_mark(25, "machine lockdown done");
+ 
+ #ifdef CONFIG_XNUPOST
+ 	kern_return_t result = kernel_list_tests();
+@@ -777,23 +784,29 @@
+ 		panic("kernel_do_post: Tests failed with result = 0x%08x", result);
+ 	}
+ 	kernel_bootstrap_log("kernel_do_post - done");
++	sweet_stage_mark(26, "xnupost done");
+ #endif /* CONFIG_XNUPOST */
+ 
+ #ifdef  IOKIT
+ 	kernel_bootstrap_log("PE_lockdown_iokit");
+ 	kprintf("SWEET BOOT: PE_lockdown_iokit enter\n");
++	sweet_stage_mark(27, "PE_lockdown_iokit enter");
+ 	PE_lockdown_iokit();
++	sweet_stage_mark(29, "PE_lockdown_iokit exit");
+ 	kprintf("SWEET BOOT: PE_lockdown_iokit exit\n");
+ #endif
+ 	/*
+ 	 * max_cpus must be nailed down by the time PE_lockdown_iokit() finishes,
+ 	 * at the latest
+ 	 */
++	sweet_stage_mark(30, "vm_set_restrictions enter");
+ 	vm_set_restrictions(machine_info.max_cpus);
++	sweet_stage_mark(31, "vm_set_restrictions done");
+ 
+ 
+ #if KPERF
+ 	kperf_init_early();
++	sweet_stage_mark(32, "kperf_init_early done");
+ #endif
+ 
+ 	/*
+@@ -801,6 +814,7 @@
+ 	 */
+ #ifdef  MACH_BSD
+ 	kprintf("SWEET BOOT: bsd_init enter\n");
++	sweet_stage_mark(33, "bsd_init enter");
+ 	bsd_init();
+ #endif
+ 
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -21,6 +21,7 @@
+ #include <os/overflow.h>
+ 
+ #include <pexpert/arm64/board_config.h>
++#include <arm64/sweet_early.h>
+ 
+ 
+ /* extern references */
+@@ -383,11 +384,14 @@
+ 	zalloc_iokit_lockdown();
+ 	if (!iokit) {
+ 		kprintf("SWEET BOOT: StartIOKitMatching skipped (sweetiokit=0)\n");
++		sweet_stage_mark(28, "IOKit matching skipped");
+ 		return;
+ 	}
+ 	kprintf("SWEET BOOT: StartIOKitMatching enter\n");
++	sweet_stage_mark(28, "IOKit matching start");
+ 	StartIOKitMatching();
+ 	kprintf("SWEET BOOT: StartIOKitMatching exit\n");
++	sweet_stage_mark(28, "IOKit matching done");
+ }
+ 
+ void
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -195,6 +195,7 @@
+ #endif /* SKYWALK */
+ 
+ #include <pexpert/pexpert.h>
++#include <arm64/sweet_early.h>
+ #include <machine/pal_routines.h>
+ #include <console/video_console.h>
+ 
+@@ -501,6 +502,7 @@
+ 	throttle_init();
+ 
+ 	printf(copyright);
++	sweet_stage_mark(34, "bsd_init start");
+ 
+ #if CONFIG_DEV_KMEM
+ 	bsd_init_kprintf("calling dev_kmem_init\n");
+@@ -690,6 +692,7 @@
+ 	/* Initialize the file systems. */
+ 	bsd_init_kprintf("calling vfsinit\n");
+ 	vfsinit();
++	sweet_stage_mark(35, "vfsinit done");
+ 
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ 	/* AMFI's MAC policy is built in on SWEET (bsd/kern/sweet_amfi.c). */
+@@ -798,7 +801,9 @@
+ 	sysctl_mib_init();
+ 
+ 	bsd_init_kprintf("calling bsd_autoconf\n");
++	sweet_stage_mark(36, "bsd_autoconf enter");
+ 	bsd_autoconf();
++	sweet_stage_mark(37, "bsd_autoconf done");
+ 
+ #if CONFIG_DTRACE
+ 	dtrace_postinit();
+@@ -873,15 +878,18 @@
+ 		int err;
+ 
+ 		bsd_init_kprintf("calling setconf\n");
++		sweet_stage_mark(38, "setconf enter");
+ 		setconf();
+ #if CONFIG_NETBOOT
+ 		netboot = (mountroot == netboot_mountroot);
+ #endif
+ 
+ 		bsd_init_kprintf("vfs_mountroot\n");
++		sweet_stage_mark(49, "vfs_mountroot enter");
+ 		if (0 == (err = vfs_mountroot())) {
+ 			break;
+ 		}
++		sweet_stage_mark(90, "vfs_mountroot failed");
+ 		rootdevice[0] = '\0';
+ #if CONFIG_NETBOOT
+ 		if (netboot) {
+@@ -898,8 +906,10 @@
+ #endif
+ 		printf("cannot mount root, errno = %d\n", err);
+ 	}
++	sweet_stage_mark(50, "root mounted");
+ 
+ 	IOSecureBSDRoot(rootdevice);
++	sweet_stage_mark(51, "secure root done");
+ 
+ 	mountlist.tqh_first->mnt_flag |= MNT_ROOTFS;
+ 
+@@ -915,6 +925,7 @@
+ 	set_rootvnode(init_rootvnode);
+ 	lck_rw_unlock_exclusive(&rootvnode_rw_lock);
+ 	init_rootvnode = NULLVP;  /* use rootvnode after this point */
++	sweet_stage_mark(52, "root vnode ready");
+ 
+ 
+ 	if (!bsd_rooted_ramdisk()) {
+@@ -1070,6 +1081,7 @@
+ #endif /* DEVELOPMENT || DEBUG */
+ 
+ 	bsd_init_kprintf("done\n");
++	sweet_stage_mark(53, "bsd_init done");
+ }
+ 
+ void
+@@ -1077,6 +1089,7 @@
+ {
+ 	proc_t p = current_proc();
+ 
++	sweet_stage_mark(54, "bsdinit_task");
+ 	process_name("init", p);
+ 
+ 	/* Set up exception-to-signal reflection */
+@@ -1097,7 +1110,9 @@
+ #endif
+ 
+ 	bsd_init_kprintf("bsd_do_post - done");
++	sweet_stage_mark(55, "bsd_do_post done");
+ 
++	sweet_stage_mark(56, "load_init_program");
+ 	load_init_program(p);
+ 	lock_trace = 1;
+ }
+@@ -1132,7 +1147,9 @@
+ 	kern_return_t   err;
+ 
+ 	printf("SWEET ROOT: calling IOFindBSDRoot\n");
++	sweet_stage_mark(39, "IOFindBSDRoot enter");
+ 	err = IOFindBSDRoot(rootdevice, sizeof(rootdevice), &rootdev, &flags);
++	sweet_stage_mark(48, "IOFindBSDRoot returned");
+ 	printf("SWEET ROOT: IOFindBSDRoot returned %d\n", err);
+ 	if (err) {
+ 		printf("setconf: IOFindBSDRoot returned an error (%d);"
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -37,6 +37,7 @@
+ #include <vm/vm_kern.h>
+ #include <pexpert/pexpert.h>
+ #include <pexpert/device_tree.h>
++#include <arm64/sweet_early.h>
+ #include <libkern/libkern.h>
+ #include <machine/atomic.h>
+ 
+@@ -589,6 +590,7 @@
+ sweet_ufs_init(void)
+ {
+ 	printf("SWEET UFS: init enter\n");
++	sweet_stage_mark(42, "UFS init enter");
+ 	DTEntry node;
+ 	uintptr_t const *reg = NULL;
+ 	unsigned int size = 0;
+@@ -612,6 +614,7 @@
+ 
+ 	su.regs = ml_io_map(reg[0], reg[1]);
+ 	printf("SWEET UFS: regs mapped\n");
++	sweet_stage_mark(43, "UFS regs mapped");
+ 
+ 	/*
+ 	 * r8q: the board's UFS DMA path is only known to work below 4 GiB. The
+@@ -627,13 +630,16 @@
+ 		su.dma = ml_io_map(su.dma_pa, DMA_SIZE);
+ 		if (!su.dma) {
+ 			printf("SWEET UFS: cannot map low DMA at 0x%llx\n", su.dma_pa);
++			sweet_stage_mark(91, "UFS low DMA map failed");
+ 			return ENOMEM;
+ 		}
+ 		printf("SWEET UFS: low DMA at 0x%llx\n", su.dma_pa);
++		sweet_stage_mark(44, "UFS low DMA mapped");
+ 	} else {
+ 		if (kmem_alloc_contig(kernel_map, &su.dma, DMA_SIZE, PAGE_MASK, 0, 0,
+ 		    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+ 			printf("SWEET UFS: no contiguous DMA memory\n");
++			sweet_stage_mark(91, "UFS DMA alloc failed");
+ 			return ENOMEM;
+ 		}
+ 		ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)su.dma);
+@@ -648,6 +654,7 @@
+ 	lck_mtx_lock(&sweet_ufs_lock);
+ 	error = ufs_take_over_host();
+ 	if (!error) {
++		sweet_stage_mark(45, "UFS host taken over");
+ 		static const uint8_t tur[6] = { 0x00 };
+ 		/* The first command after the bootloader may report a unit attention. */
+ 		for (int i = 0; i < 3 && (error = ufs_scsi(tur, sizeof(tur), 0, false)); i++) {
+@@ -658,8 +665,10 @@
+ 	}
+ 	lck_mtx_unlock(&sweet_ufs_lock);
+ 	if (error) {
++		sweet_stage_mark(92, "UFS probe failed");
+ 		return error;
+ 	}
++	sweet_stage_mark(46, "UFS partition found");
+ 
+ 	su.bmajor = bdevsw_add(-1, &sweet_ufs_bdevsw);
+ 	if (su.bmajor < 0) {
+@@ -678,6 +687,7 @@
+ 	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+ 	    su.writable ? "read-write" : "read-only", su.dma_pa);
++	sweet_stage_mark(47, "UFS root ready");
+ 	/* CPU clock first: firmware leaves the cores slow (apollo, sweet_cpufreq.c). */
+ 	sweet_cpufreq_init();
+ 	/* Adreno 650 probe; does nothing without boot-arg sweetgpu=N (sweet_gpu.c). */
+@@ -840,6 +850,7 @@
+ sweet_ufs_rootdev(dev_t *dev)
+ {
+ 	printf("SWEET UFS: rootdev enter\n");
++	sweet_stage_mark(41, "UFS rootdev enter");
+ 	if (!su.ready) {
+ 		int error = sweet_ufs_init();
+ 		if (error) {
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -43,6 +43,7 @@
+ #include <vm/pmap.h>
+ #include <vm/vm_map.h>
+ #include <pexpert/pexpert.h>
++#include <arm64/sweet_early.h>
+ #include <kern/clock.h>
+ #if CONFIG_KDP_INTERACTIVE_DEBUGGING
+ #include <kern/debug.h>
+@@ -683,10 +684,23 @@
+ 	assert(matching);
+ 	matching->setObject(gIOResourceMatchedKey, gIOBSDKey);
+ 
+-	if ((service = IOService::waitForMatchingService(matching, 30ULL * kSecondScale))) {
+-		OSSafeReleaseNULL(service);
++	/*
++	 * SWEET: with matching disabled there is nothing to match. Waiting the
++	 * full 30 seconds only delays the UFS root handoff.
++	 */
++	int sweet_iokit = 1;
++	PE_parse_boot_argn("sweetiokit", &sweet_iokit, sizeof(sweet_iokit));
++	if (sweet_iokit) {
++		sweet_stage_mark(40, "waiting IOResources");
++		if ((service = IOService::waitForMatchingService(matching, 30ULL * kSecondScale))) {
++			OSSafeReleaseNULL(service);
++		} else {
++			IOLog("!BSD\n");
++		}
++		sweet_stage_mark(40, "IOResources wait done");
+ 	} else {
+-		IOLog("!BSD\n");
++		IOLog("SWEET ROOT: IOKit matching skipped; no IOResources wait\n");
++		sweet_stage_mark(40, "IOKit wait skipped");
+ 	}
+ 	matching->release();
+ 	matching = NULL;
+@@ -1035,6 +1049,14 @@
+ 	OSDictionary     *matching;
+ 	const OSSymbol   *functionName = OSSymbol::withCStringNoCopy("SecureRootName");
+ 
++	int sweet_iokit = 1;
++	PE_parse_boot_argn("sweetiokit", &sweet_iokit, sizeof(sweet_iokit));
++	if (!sweet_iokit) {
++		IOLog("SWEET ROOT: secure root IOKit wait skipped\n");
++		sweet_stage_mark(51, "secure root skipped");
++		return;
++	}
++
+ 	matching = IOService::serviceMatching("IOPlatformExpert");
+ 	assert(matching);
+ 	pe = (IOPlatformExpert *) IOService::waitForMatchingService(matching, 30ULL * kSecondScale);
