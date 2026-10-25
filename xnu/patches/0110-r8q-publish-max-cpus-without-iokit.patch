@@ -1,0 +1,21 @@
+--- a/pexpert/arm/pe_init.c
++++ b/pexpert/arm/pe_init.c
+@@ -383,7 +383,18 @@
+ 	(void)PE_parse_boot_argn("sweetiokit", &iokit, sizeof(iokit));
+ 	zalloc_iokit_lockdown();
+ 	if (!iokit) {
++		unsigned int max_cpus = ml_get_topology_info()->max_cpu_id + 1;
++
+ 		kprintf("SWEET BOOT: StartIOKitMatching skipped (sweetiokit=0)\n");
++		/*
++		 * Normally SweetCPU publishes every CPU nub during matching and then
++		 * calls ml_set_max_cpus(topology->max_cpu_id + 1). With matching off
++		 * nothing would ever release ml_wait_max_cpus(), which kperf_init_early()
++		 * calls before bsd_init(). Publish the same value here.
++		 */
++		ml_set_max_cpus(max_cpus);
++		kprintf("SWEET BOOT: max cpus published without IOKit (%u)\n",
++		    max_cpus);
+ 		sweet_stage_mark(28, "IOKit matching skipped");
+ 		return;
+ 	}
