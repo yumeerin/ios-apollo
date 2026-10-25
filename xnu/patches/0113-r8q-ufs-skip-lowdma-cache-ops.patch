@@ -1,0 +1,77 @@
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -112,6 +112,7 @@
+ 	bool writable;                          /* boot-arg ufsrw=1 */
+ 	bool cache;                             /* boot-arg ufscache=1 */
+ 	bool wait;                              /* boot-arg ufswait=1 */
++	bool dma_uncached;                      /* dma-pa is ml_io_map'ed device memory */
+ 	int bmajor, cmajor;
+ 	dev_t bdev;
+ 	bool ready;
+@@ -135,12 +136,27 @@
+ static void
+ dma_sync(uint32_t off, uint32_t len)
+ {
++	/*
++	 * A dma-pa buffer is mapped through ml_io_map (uncached device memory).
++	 * Cache maintenance by physical address would panic in phystokv_range()
++	 * when the address is below the highmem dram base (r8q: 0xaf01f000 vs
++	 * gPhysBase 0x100000000). The mapping is already coherent, so only a
++	 * barrier is needed.
++	 */
++	if (su.dma_uncached) {
++		__builtin_arm_dsb(0xf);
++		return;
++	}
+ 	flush_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
+ }
+ 
+ static void
+ dma_clean(uint32_t off, uint32_t len)
+ {
++	if (su.dma_uncached) {
++		__builtin_arm_dsb(0xf);
++		return;
++	}
+ 	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
+ }
+ 
+@@ -627,6 +643,7 @@
+ 	if (SecureDTGetProperty(node, "dma-pa", (void const **)&dma_pa_prop, &dma_pa_size) == kSuccess &&
+ 	    dma_pa_size >= sizeof(uintptr_t) && dma_pa_prop[0]) {
+ 		su.dma_pa = dma_pa_prop[0];
++		su.dma_uncached = true;
+ 		su.dma = ml_io_map(su.dma_pa, DMA_SIZE);
+ 		if (!su.dma) {
+ 			printf("SWEET UFS: cannot map low DMA at 0x%llx\n", su.dma_pa);
+@@ -647,6 +664,7 @@
+ 			return ENOMEM;
+ 		}
+ 		su.dma_pa = ptoa_64(pn);
++		su.dma_uncached = false;        /* kmem_alloc: cacheable, needs maintenance */
+ 	}
+ 	su.lun = 0;
+ 	su.secsize = DEV_BSIZE;
+@@ -656,9 +674,14 @@
+ 	if (!error) {
+ 		sweet_stage_mark(45, "UFS host taken over");
+ 		static const uint8_t tur[6] = { 0x00 };
++		sweet_stage_mark(99, "UFS TUR start");
+ 		/* The first command after the bootloader may report a unit attention. */
+ 		for (int i = 0; i < 3 && (error = ufs_scsi(tur, sizeof(tur), 0, false)); i++) {
+ 		}
++		if (error) {
++			printf("SWEET UFS: TEST UNIT READY failed: %d\n", error);
++		}
++		sweet_stage_mark(100, "UFS TUR done");
+ 	}
+ 	if (!error) {
+ 		error = ufs_find_partition(want);
+@@ -668,6 +691,7 @@
+ 		sweet_stage_mark(92, "UFS probe failed");
+ 		return error;
+ 	}
++	sweet_stage_mark(101, "UFS GPT read done");
+ 	sweet_stage_mark(46, "UFS partition found");
+ 
+ 	su.bmajor = bdevsw_add(-1, &sweet_ufs_bdevsw);
