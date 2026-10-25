@@ -1,0 +1,188 @@
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -508,10 +508,12 @@
+ 	bsd_init_kprintf("calling dev_kmem_init\n");
+ 	dev_kmem_init();
+ #endif
++	sweet_stage_mark(60, "dev_kmem_init done");
+ 
+ 	/* Initialize kauth subsystem before instancing the first credential */
+ 	bsd_init_kprintf("calling kauth_init\n");
+ 	kauth_init();
++	sweet_stage_mark(61, "kauth_init done");
+ 
+ 	/* kernel_task->proc = kernproc; */
+ 	set_bsdtask_info(kernel_task, (void *)kernproc);
+@@ -540,6 +542,7 @@
+ 	/* give kernproc a name */
+ 	bsd_init_kprintf("calling process_name\n");
+ 	process_name("kernel_task", kernproc);
++	sweet_stage_mark(62, "process_name done");
+ 
+ 	/* Allocate proc lock attribute */
+ 
+@@ -581,6 +584,7 @@
+ 	check_policy_init(policy_check_flags);
+ #endif
+ #endif /* MAC */
++	sweet_stage_mark(63, "mac_policy_initbsd done");
+ 
+ 	/*
+ 	 * Make a session and group
+@@ -615,6 +619,7 @@
+ 	proc_list_unlock();
+ 
+ 	proc_set_task(kernproc, kernel_task);
++	sweet_stage_mark(64, "process 0 linked");
+ 
+ #if DEVELOPMENT || DEBUG
+ 	if (bootarg_disable_aslr) {
+@@ -632,6 +637,7 @@
+ 	mac_cred_label_associate_kernel(vfs_context0.vc_ucred);
+ #endif
+ 	proc_update_creds_onproc(kernproc);
++	sweet_stage_mark(65, "kernel creds set");
+ 
+ 	TAILQ_INIT(&kernproc->p_aio_activeq);
+ 	TAILQ_INIT(&kernproc->p_aio_doneq);
+@@ -672,6 +678,7 @@
+ 	    VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+ 	    KMS_PERMANENT | KMS_NOFAIL,
+ 	    VM_KERN_MEMORY_BSD).kmr_submap;
++	sweet_stage_mark(66, "bsd pageable map done");
+ 
+ 	/*
+ 	 * Initialize buffers and hash links for buffers
+@@ -682,15 +689,18 @@
+ 	 */
+ 	bsd_init_kprintf("calling bsd_bufferinit\n");
+ 	bsd_bufferinit();
++	sweet_stage_mark(67, "bsd_bufferinit done");
+ 
+ 	/*
+ 	 * Initialize the calendar.
+ 	 */
+ 	bsd_init_kprintf("calling IOKitInitializeTime\n");
+ 	IOKitInitializeTime();
++	sweet_stage_mark(68, "IOKitInitializeTime done");
+ 
+ 	/* Initialize the file systems. */
+ 	bsd_init_kprintf("calling vfsinit\n");
++	sweet_stage_mark(69, "vfsinit enter");
+ 	vfsinit();
+ 	sweet_stage_mark(35, "vfsinit done");
+ 
+@@ -698,28 +708,33 @@
+ 	/* AMFI's MAC policy is built in on SWEET (bsd/kern/sweet_amfi.c). */
+ 	extern void sweet_amfi_policy_register(void);
+ 	sweet_amfi_policy_register();
++	sweet_stage_mark(70, "sweet_amfi registered");
+ #endif
+ 
+ #if SWEET_HFS
+ 	/* HFS is built in on SWEET: register it like its kext would, before mounting root. */
+ 	extern void sweet_hfs_register(void);
+ 	sweet_hfs_register();
++	sweet_stage_mark(71, "sweet_hfs registered");
+ #endif
+ 
+ #if CONFIG_PROC_UUID_POLICY
+ 	/* Initial proc_uuid_policy subsystem */
+ 	bsd_init_kprintf("calling proc_uuid_policy_init()\n");
+ 	proc_uuid_policy_init();
++	sweet_stage_mark(72, "proc_uuid_policy done");
+ #endif
+ 
+ #if SOCKETS
+ 	/* Initialize per-CPU cache allocator */
+ 	mcache_init();
++	sweet_stage_mark(73, "mcache_init done");
+ 
+ 	/* Initialize mbuf's. */
+ 	bsd_init_kprintf("calling mbinit\n");
+ 	mbinit();
+ 	restricted_in_port_init();
++	sweet_stage_mark(74, "mbinit done");
+ #endif /* SOCKETS */
+ 
+ 	/*
+@@ -729,19 +744,23 @@
+ #if CONFIG_AUDIT
+ 	bsd_init_kprintf("calling audit_init\n");
+ 	audit_init();
++	sweet_stage_mark(75, "audit_init done");
+ #endif
+ 
+ 	/* Initialize kqueues */
+ 	bsd_init_kprintf("calling knote_init\n");
+ 	knote_init();
++	sweet_stage_mark(76, "knote_init done");
+ 
+ 	/* Initialize event handler */
+ 	bsd_init_kprintf("calling eventhandler_init\n");
+ 	eventhandler_init();
++	sweet_stage_mark(77, "eventhandler_init done");
+ 
+ 	/* Initialize for async IO */
+ 	bsd_init_kprintf("calling aio_init\n");
+ 	aio_init();
++	sweet_stage_mark(78, "aio_init done");
+ 
+ 	pthread_init();
+ 	/* POSIX Shm and Sem */
+@@ -749,6 +768,7 @@
+ 	pshm_cache_init();
+ 	bsd_init_kprintf("calling psem_cache_init\n");
+ 	psem_cache_init();
++	sweet_stage_mark(79, "pthread and pshm/psem done");
+ 
+ 	/*
+ 	 * Initialize protocols.  Block reception of incoming packets
+@@ -757,8 +777,10 @@
+ #if NETWORKING
+ 	bsd_init_kprintf("calling nwk_wq_init\n");
+ 	nwk_wq_init();
++	sweet_stage_mark(80, "nwk_wq_init done");
+ 	bsd_init_kprintf("calling dlil_init\n");
+ 	dlil_init();
++	sweet_stage_mark(81, "dlil_init done");
+ #endif /* NETWORKING */
+ #if SOCKETS
+ 	bsd_init_kprintf("calling socketinit\n");
+@@ -766,6 +788,7 @@
+ 	bsd_init_kprintf("calling domaininit\n");
+ 	domaininit();
+ 	iptap_init();
++	sweet_stage_mark(82, "socket/domain init done");
+ #if FLOW_DIVERT
+ 	flow_divert_init();
+ #endif  /* FLOW_DIVERT */
+@@ -773,6 +796,7 @@
+ #if SKYWALK
+ 	bsd_init_kprintf("calling skywalk_init\n");
+ 	(void) skywalk_init();
++	sweet_stage_mark(83, "skywalk_init done");
+ #endif /* SKYWALK */
+ #if NETWORKING
+ #if NECP
+@@ -780,6 +804,7 @@
+ 	necp_init();
+ #endif
+ 	netagent_init();
++	sweet_stage_mark(84, "necp/netagent done");
+ #endif /* NETWORKING */
+ 
+ #if CONFIG_FREEZE
+@@ -795,10 +820,12 @@
+ 	/* Initialize kernel memory status notifications */
+ 	bsd_init_kprintf("calling memorystatus_init\n");
+ 	memorystatus_init();
++	sweet_stage_mark(85, "memorystatus_init done");
+ #endif /* CONFIG_MEMORYSTATUS */
+ 
+ 	bsd_init_kprintf("calling sysctl_mib_init\n");
+ 	sysctl_mib_init();
++	sweet_stage_mark(86, "sysctl_mib_init done");
+ 
+ 	bsd_init_kprintf("calling bsd_autoconf\n");
+ 	sweet_stage_mark(36, "bsd_autoconf enter");
