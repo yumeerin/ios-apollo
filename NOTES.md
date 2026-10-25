@@ -44,7 +44,7 @@
 2. Install the iPhone X 16.7.16 HFS+ root image and D22AP `/product` data. This erases Android userdata and requires explicit user confirmation before any write. No iOS root image or D22AP product data is present locally (`/Volumes` has only the Mac disk and Nix store); the sweet port's images were under `/run/media/dipa/android/ios-sweet-ipsw/` on the Linux host, not here. Needed: `ios16-root-20H392-*.img` (and ideally its `.simg`) plus D22AP `/product`; then write only userdata (OrangeFox `adb push` + `dd` is simplest) and keep the existing read-only boot path for the first mount test. After a successful iOS mount, fix the ADT highmem size (`dram-size` 0xfff00000 vs real upper bank 0xfcc00000) and `/pram` placement.
 3. Then r8q keys and the STM touch driver; obtain `fts5cu56a_r8.bin` from a vendor pull/firmware package.
 
-**Userdata status:** Android userdata is intact and unmodified; every r8q UFS boot so far used `ufsrw=0 rootrw=0`. The iOS-root step will erase it and needs explicit user approval. Keep the stock boot backup and userdata backup strategy in mind before writing.
+**Userdata status:** Android userdata is intact and unmodified; every r8q UFS boot so far used `ufsrw=0 rootrw=0`. On 2026-10-26 the user asked to back up Android before the iOS-root step, so the verified stock boot was restored (`6f262d5c…`, readback-verified) and the phone rebooted to Android. The iOS-root step will erase userdata and needs explicit user approval at that time.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
