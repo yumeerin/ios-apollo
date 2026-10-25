@@ -1,0 +1,58 @@
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -158,6 +158,22 @@
+ 		return;
+ 	}
+ 	clean_dcache64((addr64_t)(su.dma_pa + off), len, TRUE);
++}
++
++/*
++ * Zero part of the DMA buffer with ordinary aligned stores. bzero() uses
++ * DC ZVA for larger sizes, and DC ZVA is not permitted on the Device-nGnRnE
++ * mapping that ml_io_map() creates for a dma-pa buffer: it takes an alignment
++ * fault in the kernel. Volatile 64-bit stores stay plain stores.
++ */
++static void
++dma_zero(uint32_t off, uint32_t len)
++{
++	volatile uint64_t *p = (volatile uint64_t *)(su.dma + off);
++
++	for (uint32_t done = 0; done < len; done += sizeof(*p)) {
++		*p++ = 0;
++	}
+ }
+ 
+ /*
+@@ -172,8 +188,11 @@
+ 	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
+ 
+ 	assert(len <= BOUNCE_SIZE);
+-	bzero(utrd, sizeof(*utrd));
+-	bzero(ucd, sizeof(*ucd));
++	dma_zero(DMA_UTRL, sizeof(*utrd));
++	dma_zero(DMA_UCD, sizeof(*ucd));
++	if (su.tag == 0) {
++		sweet_stage_mark(102, "UFS first cmd zeroed");
++	}
+ 
+ 	ucd->cmd[0] = 0x01;                     /* COMMAND UPIU */
+ 	ucd->cmd[1] = len ? (write ? 0x20 : 0x40) : 0x00;      /* W: data out, R: data in */
+@@ -224,6 +243,9 @@
+ 	__builtin_arm_dsb(0xf);
+ 
+ 	ufs_wr(REG_UTRLDBR, 1);
++	if (su.tag == 1) {
++		sweet_stage_mark(103, "UFS first cmd rung");
++	}
+ 	uint64_t deadline;
+ 	nanoseconds_to_absolutetime(CMD_TIMEOUT_NS, &deadline);
+ 	deadline += mach_absolute_time();
+@@ -832,7 +854,7 @@
+ 				.magic = { 'S', 'W', 'E', 'E', 'T', 'L', 'O', 'G' },
+ 				.version = 1, .size = SWEET_LOG_SIZE, .total = total, .seq = ++seq,
+ 			};
+-			bzero(bounce, UFS_BLOCK);
++			dma_zero(DMA_BOUNCE, UFS_BLOCK);
+ 			memcpy(bounce, &h, sizeof(h));
+ 			error = ufs_write_blocks(base, 1);
+ 		}
